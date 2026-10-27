@@ -1,0 +1,44 @@
+# Values reduzidos para um lab local (sem HA, sem storage persistente,
+# resources pequenos). Em produção isso seria diferente: PVCs, replicas,
+# retenção maior e alertmanager com receivers reais.
+
+grafana:
+  adminPassword: admin
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.k8s-lab.local
+    path: /
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  defaultDashboardsEnabled: true
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    storageSpec: {}
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# kube-state-metrics e node-exporter ficam com defaults do chart (já leves).
