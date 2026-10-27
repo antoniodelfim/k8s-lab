@@ -35,13 +35,42 @@ kubectl apply -f manifests/apps/hello-world.yaml
 ./scripts/down.sh
 ```
 
+## GitOps com ArgoCD
+
+Tudo neste cluster é gerenciado via ArgoCD, usando o padrão **app-of-apps**: a única Application aplicada manualmente é [`argocd/root.yaml`](argocd/root.yaml), que sincroniza o restante do diretório `argocd/` (incluindo novas Applications adicionadas depois).
+
+```bash
+# bootstrap (uma única vez)
+kubectl apply -f argocd/root.yaml
+```
+
+Aplicações geridas hoje:
+
+- **hello-world** ([`manifests/apps`](manifests/apps)) — workload de exemplo
+- **observability** ([`manifests/observability`](manifests/observability)) — kube-prometheus-stack (Prometheus + Grafana + Alertmanager) instalado via Helm chart referenciado pela Application
+
+Para acessar as UIs, adicione ao `hosts` do seu sistema:
+
+```
+127.0.0.1 argocd.k8s-lab.local
+127.0.0.1 grafana.k8s-lab.local
+```
+
+| Serviço | URL | Usuário | Senha |
+|---|---|---|---|
+| ArgoCD | https://argocd.k8s-lab.local:8443 | admin | `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" \| base64 -d` |
+| Grafana | http://grafana.k8s-lab.local:8080 | admin | admin |
+
+> Nota: o CRD do prometheus-operator aparece como `OutOfSync` no ArgoCD por um diff cosmético de metadata em specs muito grandes — issue conhecida da comunidade, não afeta o estado real (`HEALTH STATUS` permanece `Healthy`). Mitigado via `ignoreDifferences` em [`argocd/app-observability.yaml`](argocd/app-observability.yaml).
+
 ## Roadmap
 
 - [x] Cluster multi-node com ingress-nginx
 - [x] Workload de exemplo com readiness probe e requests/limits
-- [ ] Stack de observabilidade (Prometheus + Grafana) via `manifests/observability/`
-- [ ] GitOps com ArgoCD apontando para este repositório
+- [x] Stack de observabilidade (Prometheus + Grafana) via `manifests/observability/`
+- [x] GitOps com ArgoCD apontando para este repositório
 - [ ] Exemplo de HPA + teste de carga
+- [ ] Dashboards customizados no Grafana para o `hello-world`
 
 ## Autor
 
