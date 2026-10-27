@@ -11,8 +11,40 @@ O `ingress-nginx` não é um proxy "nativo" do Kubernetes — é um **controller
 3. O NGINX recarrega a configuração (`reload` ou, em versões recentes, via **Lua + dynamic upstreams**, evitando reload completo a cada mudança de endpoint)
 4. O tráfego externo chega ao pod do controller via `Service` tipo `LoadBalancer`/`NodePort` (no nosso lab, via `extraPortMappings` do `kind`, que simula isso mapeando a porta do host direto pro container)
 
-```
-Internet/Host → Service (LB/NodePort) → Pod ingress-nginx-controller → nginx.conf gerado → upstream (Service → Endpoints → Pods)
+```mermaid
+flowchart LR
+    subgraph Host["Host / Internet"]
+        Client(["Cliente"])
+    end
+
+    subgraph Cluster["Cluster Kubernetes"]
+        direction LR
+        SVC["Service\ningress-nginx-controller\n(LoadBalancer / NodePort)"]
+
+        subgraph Pod["Pod ingress-nginx-controller"]
+            direction TB
+            Watcher["Watcher / Informer\n(observa Ingress, Service,\nEndpoints, Secret)"]
+            Model["Modelo de config\nem memória"]
+            Template["Template Go\n(nginx.tmpl)"]
+            NginxConf["nginx.conf\ngerado"]
+            NginxProc["Processo NGINX\n(reload ou Lua\ndynamic upstream)"]
+
+            Watcher --> Model --> Template --> NginxConf --> NginxProc
+        end
+
+        API["kube-apiserver"]
+        IngressObj["Ingress\n(+ annotations\nnginx.ingress.kubernetes.io/*)"]
+        BackendSVC["Service: hello-world"]
+        Pods["Pods: hello-world"]
+
+        IngressObj -.watch.-> API
+        API -.notifica.-> Watcher
+        Client --> SVC --> NginxProc
+        NginxProc --> BackendSVC --> Pods
+    end
+
+    style IngressObj fill:#632CA6,color:#fff
+    style NginxProc fill:#009639,color:#fff
 ```
 
 ### O problema estrutural
@@ -25,10 +57,35 @@ A Gateway API também depende de um controller fazendo o trabalho real (nginx, E
 
 ### a) Papéis separados por objeto (role-oriented API)
 
-```
-GatewayClass   → quem implementa (ex.: "nginx", "istio", "cilium")       [plataforma]
-Gateway        → onde entra o tráfego (portas, TLS, listeners)          [plataforma]
-HTTPRoute      → como rotear (paths, headers, weight, filters)          [aplicação]
+```mermaid
+flowchart TB
+    subgraph Platform["Time de Plataforma / Infra"]
+        GC["GatewayClass\n'quem implementa'\n(nginx, istio, cilium...)"]
+        GW["Gateway\n'onde entra o tráfego'\nportas, TLS, listeners"]
+        GC --> GW
+    end
+
+    subgraph TeamA["Time de Aplicação A — namespace: shop"]
+        RA["HTTPRoute\ncomo rotear /shop/*"]
+        SvcA["Service: shop-api"]
+        RA --> SvcA
+    end
+
+    subgraph TeamB["Time de Aplicação B — namespace: payments"]
+        RB["HTTPRoute\ncomo rotear /payments/*"]
+        RG["ReferenceGrant\nautoriza cross-namespace"]
+        SvcB["Service: payments-api"]
+        RB --> RG --> SvcB
+    end
+
+    Client(["Cliente"]) --> GW
+    GW -->|parentRef| RA
+    GW -->|parentRef| RB
+
+    style GC fill:#326CE5,color:#fff
+    style GW fill:#326CE5,color:#fff
+    style RA fill:#632CA6,color:#fff
+    style RB fill:#632CA6,color:#fff
 ```
 
 Um time de aplicação cria/edita só o `HTTPRoute` no seu namespace. Ele referencia um `Gateway` que já existe (gerenciado pela plataforma), sem precisar de RBAC sobre load balancer, certificado ou porta exposta. No modelo `Ingress`, isso tudo vive misturado no mesmo objeto.
@@ -125,6 +182,66 @@ spec:
 
 **O que NÃO muda:** o `Service`/`Endpoints`/`Deployment` do `hello-world` continuam exatamente iguais — a Gateway API só substitui a camada de roteamento, nunca o workload.
 
+### Visão lado a lado da conversão
+
+```mermaid
+flowchart LR
+    subgraph Antes["Antes — Ingress"]
+        direction TB
+        I1["Ingress: hello-world\n+ annotation rewrite-target"]
+        I1 --> IS["Service: hello-world"]
+        IS --> IP["Pods: hello-world"]
+    end
+
+    subgraph Depois["Depois — Gateway API"]
+        direction TB
+        G1["Gateway: lab-gateway\n(porta 80)"]
+        G2["HTTPRoute: hello-world\n+ filter URLRewrite"]
+        G1 --> G2
+        G2 --> GS["Service: hello-world"]
+        GS --> GP["Pods: hello-world"]
+    end
+
+    Antes -. "mesma intenção,\nmesmo backend" .-> Depois
+
+    style I1 fill:#632CA6,color:#fff
+    style G1 fill:#326CE5,color:#fff
+    style G2 fill:#326CE5,color:#fff
+```
+
+### Sequência de uma requisição, nos dois modelos
+
+```mermaid
+sequenceDiagram
+    actor C as Cliente
+    participant LB as Service (LB/NodePort)
+    participant NG as ingress-nginx (proxy)
+    participant GW as Gateway (listener :80)
+    participant RT as HTTPRoute (match + filters)
+    participant SV as Service: hello-world
+    participant P as Pod: hello-world
+
+    rect rgb(240, 230, 250)
+    Note over C,P: Fluxo hoje — Ingress
+    C->>LB: GET /
+    LB->>NG: encaminha
+    NG->>NG: aplica annotations\n(rewrite-target)
+    NG->>SV: proxy_pass
+    SV->>P: roteia pro pod
+    P-->>C: resposta
+    end
+
+    rect rgb(225, 235, 250)
+    Note over C,P: Fluxo futuro — Gateway API
+    C->>GW: GET /
+    GW->>RT: casa hostname/path
+    RT->>RT: aplica filters\n(URLRewrite, tipado)
+    RT->>SV: backendRefs
+    SV->>P: roteia pro pod
+    P-->>C: resposta
+    end
+```
+
 ## 4. Tabela-resumo de portabilidade
 
 | Aspecto | Ingress-nginx | Gateway API |
@@ -140,3 +257,18 @@ spec:
 ## 5. Conclusão prática para este lab
 
 A migração (detalhada em [`gateway-api.md`](gateway-api.md)) não vai exigir trocar o proxy por trás (`ingress-nginx` já tem suporte experimental à Gateway API) nem reescrever workloads — só a camada de roteamento. O ganho real é **portabilidade futura**: se este lab um dia trocar de `ingress-nginx` para `Istio` ou um Gateway de cloud, os `HTTPRoute`s sobrevivem; os `Ingress` com annotation não sobreviveriam.
+
+### Portabilidade entre implementações — por que o `HTTPRoute` sobrevive
+
+```mermaid
+flowchart TB
+    Route["HTTPRoute\n(mesmo YAML, inalterado)"]
+
+    Route --> Impl1["GatewayClass: nginx\n(NGINX Gateway Fabric)"]
+    Route --> Impl2["GatewayClass: istio\n(Istio)"]
+    Route --> Impl3["GatewayClass: cilium\n(Cilium)"]
+    Route -.->|"X"| Legacy["Ingress + annotations\nnginx.ingress.kubernetes.io/*\n(não porta — dialeto por controller)"]
+
+    style Route fill:#326CE5,color:#fff
+    style Legacy fill:#999,color:#fff,stroke-dasharray: 5 5
+```

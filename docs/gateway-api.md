@@ -70,6 +70,26 @@ O projeto `kubernetes/ingress-nginx` tem suporte experimental à Gateway API des
 5. Remover os `Ingress` antigos e o `IngressClass`
 6. Documentar aqui o resultado real da migração, incluindo qualquer filter proprietário necessário
 
+```mermaid
+flowchart TD
+    S1["1. Instalar GatewayClass\n+ controller\n(ingress-nginx modo experimental)"]
+    S2["2. Criar Gateway\nequivalente ao Ingress atual"]
+    S3["3. Converter manifests\n(hello-world, ArgoCD, Grafana)\npara HTTPRoute — coexistindo\ncom os Ingress atuais"]
+    S4{"4. Validar\nparidade de\ncomportamento?"}
+    S5["5. Remover Ingress\ne IngressClass antigos"]
+    S6["6. Documentar o\nresultado real"]
+
+    S1 --> S2 --> S3 --> S4
+    S4 -- "não: ajustar filters/rotas" --> S3
+    S4 -- sim --> S5 --> S6
+
+    style S1 fill:#326CE5,color:#fff
+    style S2 fill:#326CE5,color:#fff
+    style S3 fill:#326CE5,color:#fff
+    style S5 fill:#009639,color:#fff
+    style S6 fill:#009639,color:#fff
+```
+
 ## Referências
 
 - https://gateway-api.sigs.k8s.io/
