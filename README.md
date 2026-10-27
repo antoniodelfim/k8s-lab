@@ -71,6 +71,7 @@ Para acessar as UIs, adicione ao `hosts` do seu sistema:
 - [x] GitOps com ArgoCD apontando para este repositório
 - [ ] Exemplo de HPA + teste de carga
 - [ ] Dashboards customizados no Grafana para o `hello-world`
+- [ ] Migração de Ingress-nginx para Gateway API — ver [`docs/gateway-api.md`](docs/gateway-api.md)
 
 ## Autor
 
